@@ -1,0 +1,136 @@
+dobot_e6_driver:
+  ros__parameters:
+
+    # ========================================================
+    # Connection
+    # ========================================================
+    robot_ip: "192.168.5.1"
+
+    # ========================================================
+    # Frequencies
+    # ========================================================
+    # Published ROS feedback (/joint_states, /dobot/robot_mode)
+    feedback_publish_frequency_hz: 50.0
+
+    # Independent safety monitor
+    safety_monitor_frequency_hz: 50.0
+
+    # ServoJ nominal update frequency
+    # 33.333333 Hz ~= 30 ms
+    servo_frequency_hz: 33.333333
+
+    # ========================================================
+    # ServoJ timing protection
+    # ========================================================
+    # The actual dt is measured with time.monotonic().
+    # A callback that arrives too early is skipped.
+    # A callback delayed beyond servo_max_dt_s aborts velocity mode.
+    servo_min_dt_s: 0.020
+    servo_max_dt_s: 0.060
+
+    # ========================================================
+    # Feedback / command watchdogs
+    # ========================================================
+    max_feedback_age_s: 0.050
+    velocity_command_timeout_s: 0.150
+
+    # ========================================================
+    # Joint limits
+    # ========================================================
+    # Physical joint ranges [deg]
+    joint_limits_deg: [360.0, 135.0, 154.0, 160.0, 173.0, 360.0]
+
+    # Hard software limit = physical limit - margin
+    joint_limit_margin_deg: 2.0
+
+    # Warning boundary = hard software limit - warning zone
+    #
+    # Example J2:
+    # physical = 135 deg
+    # hard software = 133 deg
+    # warning begins at 128 deg
+    joint_limit_warning_deg: 5.0
+
+    # ========================================================
+    # Velocity mode
+    # ========================================================
+    # Maximum requested velocity accepted from
+    # /dobot/joint_velocity_cmd
+    velocity_software_limit_rad_s: 1.00
+
+    # VELOCITY mode does not require qd_actual to be near zero
+    # before starting. RobotMode == 5, fresh feedback, valid
+    # joint position and a valid velocity command are used instead.
+
+    # A six-zero command within this epsilon exits VELOCITY mode
+    zero_velocity_epsilon_rad_s: 0.00001
+
+    # Hard measured velocity supervision
+    #
+    # Applies to any active driver motion:
+    absolute_measured_velocity_limit_rad_s: 2.00
+
+    # Additional lower hard limit during VELOCITY mode:
+    velocity_mode_measured_velocity_limit_rad_s: 1.20
+
+    # Diagnostic only: persistent tracking error creates a warning
+    # but does not alter q_ref and does not stop the robot.
+    velocity_tracking_error_warning_rad_s: 0.08
+    velocity_tracking_error_warning_time_s: 0.50
+
+    # ========================================================
+    # ES01 suction gripper / Tool IO
+    # ========================================================
+
+    # The installed Dobot SDK defines ToolDO indices 0-1.
+    gripper_tool_do_index: 1
+
+    # true: raw ToolDO=1 means suction ON.
+    # Set false if the physical output logic is inverted.
+    gripper_active_high: true
+
+    # GetToolDO readback rate. Readback is suspended while
+    # VELOCITY mode is active to protect ServoJ timing.
+    gripper_monitor_frequency_hz: 2.0
+
+    # ========================================================
+    # Position mode
+    # ========================================================
+    position_completion_tolerance_deg: 0.50
+    position_min_active_time_s: 0.20
+    position_motion_timeout_s: 120.0
+
+    # ========================================================
+    # HOME
+    # ========================================================
+    home_position_rad: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    home_velocity_ratio: 50.0
+    home_acceleration_ratio: 50.0
+
+    # ========================================================
+    # PACKING
+    # ========================================================
+    packing_position_rad:
+      [
+        -1.4247983737273358,
+        -0.010110058577726934,
+        -2.452188131684251,
+        -0.7426624173849468,
+        0.09788714902695247,
+        0.26438398563707133
+      ]
+    packing_velocity_ratio: 20.0
+    packing_acceleration_ratio: 20.0
+
+    # ========================================================
+    # Recovery
+    # ========================================================
+    clear_error_max_attempts: 5
+    clear_error_retry_period_s: 1.0
+    clear_error_mode_check_period_s: 0.5
+    clear_error_valid_mode_count: 2
+
+    power_on_timeout_s: 120.0
+    power_on_poll_period_s: 5.0
+    power_on_stable_count: 2
+

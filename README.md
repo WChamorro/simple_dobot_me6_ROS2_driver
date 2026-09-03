@@ -31,12 +31,10 @@ The current development environment is based on:
 4. [ROS 2 Installation](#4-ros-2-installation)
 5. [Create the ROS 2 Workspace](#5-create-the-ros-2-workspace)
 6. [Build the Workspace](#6-build-the-workspace)
-7. [Run the Magician E6 Driver](#7-run-the-magician-e6-driver)
+7. [Run and Test the Magician E6 Driver](#7-run-and-test-the-magician-e6-driver)
 8. [RViz Visualization](#8-rviz-visualization)
 9. [Manual Control with a Joystick](#9-manual-control-with-a-joystick)
-10. [Manual Joint Position Commands](#10-manual-joint-position-commands)
-11. [Manual Joint Velocity Commands](#11-manual-joint-velocity-commands)
-12. [Emergency Stop and Robot Recovery](#12-emergency-stop-and-robot-recovery)
+10. [Emergency Stop and Robot Recovery](#10-emergency-stop-and-robot-recovery)
 
 ---
 
@@ -136,7 +134,9 @@ The option:
 
 is important because it allows the virtual environment to access the Python packages installed by ROS 2.
 
-Activate the environment:
+## 4.3 Install the DOBOT TCP/IP Python SDK
+
+Before installing the SDK, activate the virtual environment:
 
 ```bash
 source ~/MagicianE6/venv/bin/activate
@@ -147,8 +147,6 @@ Optionally update the Python packaging tools:
 ```bash
 python3 -m pip install --upgrade pip setuptools wheel
 ```
-
-## 4.3 Install the DOBOT TCP/IP Python SDK
 
 Clone the official DOBOT TCP/IP Python SDK:
 
@@ -225,10 +223,11 @@ The repository contains the ROS 2 packages used for:
 
 # 6. Build the Workspace
 
-Every new terminal used with this project should first load ROS 2 and activate the Python virtual environment:
+ROS 2 is assumed to be sourced automatically from `.bashrc`.
+
+Activate the Python virtual environment:
 
 ```bash
-source /opt/ros/jazzy/setup.bash
 source ~/MagicianE6/venv/bin/activate
 ```
 
@@ -254,7 +253,7 @@ source install/setup.bash
 
 ---
 
-# 7. Run the Magician E6 Driver
+# 7. Run and Test the Magician E6 Driver
 
 Before starting the driver, make sure that:
 
@@ -274,7 +273,32 @@ During controller startup, the robot status light may blink blue.
 
 Wait until the startup sequence has completed and the driver reports that the controller is ready.
 
-## 7.1 Enable the robot
+After launching the driver, the active ROS 2 topics should be similar to:
+
+```text
+/dobot/control_mode_monitor
+/dobot/enable
+/dobot/home
+/dobot/joint_position_cmd
+/dobot/joint_velocity_cmd
+/dobot/packing
+/dobot/recover
+/dobot/robot_mode
+/dobot/stop
+/dobot/suction_gripper
+/dobot/suction_gripper_monitor
+/joint_states
+/parameter_events
+/rosout
+```
+
+The available topics can always be verified with:
+
+```bash
+ros2 topic list
+```
+
+## 7.1 Enable and disable the robot
 
 The robot is intentionally not enabled automatically.
 
@@ -285,15 +309,6 @@ ros2 topic pub --once \
   /dobot/enable \
   std_msgs/msg/Bool \
   "{data: true}"
-```
-
-Disable it with:
-
-```bash
-ros2 topic pub --once \
-  /dobot/enable \
-  std_msgs/msg/Bool \
-  "{data: false}"
 ```
 
 Monitor the robot mode with:
@@ -308,63 +323,52 @@ The normal enabled idle state is:
 RobotMode = 5
 ```
 
-## 7.2 Driver topics
-
-### Command topics
-
-```text
-/dobot/enable
-    std_msgs/msg/Bool
-
-/dobot/recover
-    std_msgs/msg/Empty
-
-/dobot/home
-    std_msgs/msg/Empty
-
-/dobot/packing
-    std_msgs/msg/Empty
-
-/dobot/joint_position_cmd
-    dobot_e6_msgs/msg/JointPositionCommand
-
-/dobot/joint_velocity_cmd
-    dobot_e6_msgs/msg/JointVelocityCommand
-
-/dobot/stop
-    std_msgs/msg/Empty
-
-/dobot/suction_gripper
-    std_msgs/msg/Bool
-```
-
-### Feedback and monitor topics
-
-```text
-/joint_states
-    sensor_msgs/msg/JointState
-
-/dobot/robot_mode
-    std_msgs/msg/Int32
-
-/dobot/control_mode_monitor
-    std_msgs/msg/String
-
-/dobot/suction_gripper_monitor
-    std_msgs/msg/Bool
-```
-
-All active topics can be inspected with:
+Disable the robot with:
 
 ```bash
-ros2 topic list
+ros2 topic pub --once \
+  /dobot/enable \
+  std_msgs/msg/Bool \
+  "{data: false}"
 ```
+
+## 7.2 Driver topics and message types
+
+The **Type** column below indicates the ROS 2 message type used by each topic.
+
+| Topic | Type | Purpose |
+|---|---|---|
+| `/dobot/control_mode_monitor` | `std_msgs/msg/String` | Reports the current driver control mode, such as `IDLE`, `POSITION`, or `VELOCITY`. |
+| `/dobot/enable` | `std_msgs/msg/Bool` | Enables or disables robot torque/control. `true` enables the robot and `false` disables it. |
+| `/dobot/home` | `std_msgs/msg/Empty` | Commands the predefined Home position configured in the driver. |
+| `/dobot/joint_position_cmd` | `dobot_e6_msgs/msg/JointPositionCommand` | Sends a six-joint position target in radians together with velocity and acceleration ratios. |
+| `/dobot/joint_velocity_cmd` | `dobot_e6_msgs/msg/JointVelocityCommand` | Sends desired joint velocities in rad/s for all six joints. |
+| `/dobot/packing` | `std_msgs/msg/Empty` | Commands the predefined Packing position configured in the driver. |
+| `/dobot/recover` | `std_msgs/msg/Empty` | Starts the robot recovery procedure after an emergency stop or controller fault. |
+| `/dobot/robot_mode` | `std_msgs/msg/Int32` | Reports the current DOBOT controller `RobotMode`. |
+| `/dobot/stop` | `std_msgs/msg/Empty` | Stops the active robot motion. |
+| `/dobot/suction_gripper` | `std_msgs/msg/Bool` | Activates or deactivates the ES01 suction gripper. |
+| `/dobot/suction_gripper_monitor` | `std_msgs/msg/Bool` | Reports the monitored Tool DO state associated with the suction gripper. |
+| `/joint_states` | `sensor_msgs/msg/JointState` | Publishes measured joint positions and velocities for J1-J6. Used by RViz and other ROS 2 nodes. |
+| `/parameter_events` | `rcl_interfaces/msg/ParameterEvent` | Standard ROS 2 topic reporting parameter changes. |
+| `/rosout` | `rcl_interfaces/msg/Log` | Standard ROS 2 logging topic. |
 
 ## 7.3 Test the default Home position
 
 Before commanding motion, make sure that the robot workspace is clear.
 
-Send the robot to its configured Home position:
+### Step 1 — Enable the robot
+
+```bash
+ros2 topic pub --once \
+  /dobot/enable \
+  std_msgs/msg/Bool \
+  "{data: true}"
+```
+
+Wait until the robot reaches the enabled idle state.
+
+### Step 2 — Move to Home
 
 ```bash
 ros2 topic pub --once \
@@ -373,9 +377,33 @@ ros2 topic pub --once \
   "{}"
 ```
 
+Wait until the motion finishes and the robot returns to the idle state.
+
+### Step 3 — Disable the robot
+
+```bash
+ros2 topic pub --once \
+  /dobot/enable \
+  std_msgs/msg/Bool \
+  "{data: false}"
+```
+
 ## 7.4 Test the default Packing position
 
-Send the robot to its configured Packing position:
+Before commanding motion, make sure that the robot workspace is clear.
+
+### Step 1 — Enable the robot
+
+```bash
+ros2 topic pub --once \
+  /dobot/enable \
+  std_msgs/msg/Bool \
+  "{data: true}"
+```
+
+Wait until the robot reaches the enabled idle state.
+
+### Step 2 — Move to Packing
 
 ```bash
 ros2 topic pub --once \
@@ -384,7 +412,82 @@ ros2 topic pub --once \
   "{}"
 ```
 
+Wait until the motion finishes and the robot returns to the idle state.
+
+### Step 3 — Disable the robot
+
+```bash
+ros2 topic pub --once \
+  /dobot/enable \
+  std_msgs/msg/Bool \
+  "{data: false}"
+```
+
 The Home and Packing positions, together with their velocity and acceleration ratios, are configured in the driver YAML file.
+
+## 7.5 Test joint position and velocity commands
+
+### Joint position test
+
+Enable the robot:
+
+```bash
+ros2 topic pub --once \
+  /dobot/enable \
+  std_msgs/msg/Bool \
+  "{data: true}"
+```
+
+Send a six-joint position target in radians:
+
+```bash
+ros2 topic pub --once \
+  /dobot/joint_position_cmd \
+  dobot_e6_msgs/msg/JointPositionCommand \
+  "{position: [0.0, -0.2, -0.1, 0.1, 0.1, 0.1], velocity_ratio: 20.0, acceleration_ratio: 20.0}"
+```
+
+Wait until the motion finishes.
+
+Disable the robot:
+
+```bash
+ros2 topic pub --once \
+  /dobot/enable \
+  std_msgs/msg/Bool \
+  "{data: false}"
+```
+
+### Joint velocity test
+
+Enable the robot:
+
+```bash
+ros2 topic pub --once \
+  /dobot/enable \
+  std_msgs/msg/Bool \
+  "{data: true}"
+```
+
+Publish the desired joint velocity vector at 20 Hz:
+
+```bash
+ros2 topic pub -r 20 \
+  /dobot/joint_velocity_cmd \
+  dobot_e6_msgs/msg/JointVelocityCommand \
+  "{velocity: [0.1, 0.1, 0.1, 0.0, 0.0, 0.0]}"
+```
+
+> **WARNING:** this command continuously publishes the velocity setpoint at **20 Hz**. Press **Ctrl+C** in the terminal to stop sending the velocity command.
+
+After stopping the velocity publisher, wait until the robot has stopped and then disable it:
+
+```bash
+ros2 topic pub --once \
+  /dobot/enable \
+  std_msgs/msg/Bool \
+  "{data: false}"
+```
 
 ---
 
@@ -447,13 +550,13 @@ Check the Linux input devices:
 ls -l /dev/input/
 ```
 
-The first joystick will normally appear as:
+Verify that the first joystick appears as:
 
 ```text
 /dev/input/js0
 ```
 
-Verify the joystick directly:
+Test the joystick directly:
 
 ```bash
 jstest /dev/input/js0
@@ -544,84 +647,18 @@ The `X` button commands zero velocity to all six joints.
 
 ---
 
-# 10. Manual Joint Position Commands
-
-Joint positions are specified in **radians**.
-
-Example:
-
-```bash
-ros2 topic pub --once \
-  /dobot/joint_position_cmd \
-  dobot_e6_msgs/msg/JointPositionCommand \
-  "{position: [0.0, 0.5, 0.0, 0.0, 0.0, 0.0], velocity_ratio: 20.0, acceleration_ratio: 20.0}"
-```
-
-The custom message contains:
-
-```text
-position
-    Desired J1-J6 positions [rad]
-
-velocity_ratio
-    Robot velocity percentage
-
-acceleration_ratio
-    Robot acceleration percentage
-```
-
----
-
-# 11. Manual Joint Velocity Commands
-
-Joint velocities are specified in:
-
-```text
-rad/s
-```
-
-For example, command Joint 1 at `0.2 rad/s`:
-
-```bash
-ros2 topic pub -r 30 \
-  /dobot/joint_velocity_cmd \
-  dobot_e6_msgs/msg/JointVelocityCommand \
-  "{velocity: [0.2, 0.0, 0.0, 0.0, 0.0, 0.0]}"
-```
-
-The driver expects velocity commands continuously while operating in velocity mode.
-
-Press:
-
-```text
-Ctrl+C
-```
-
-to stop the ROS 2 publisher. The driver's command watchdog stops the velocity mode when commands are no longer received.
-
-A zero-velocity command can also be sent explicitly:
-
-```bash
-ros2 topic pub --once \
-  /dobot/joint_velocity_cmd \
-  dobot_e6_msgs/msg/JointVelocityCommand \
-  "{velocity: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}"
-```
-
-The driver applies its configured software velocity and joint-limit protections before sending motion commands to the robot.
-
----
-
-# 12. Emergency Stop and Robot Recovery
+# 10. Emergency Stop and Robot Recovery
 
 The physical emergency stop remains the primary safety device.
 
 If the emergency stop is pressed during operation:
 
 1. The robot immediately stops.
-2. Release the physical emergency stop.
-3. Make sure the robot workspace is safe.
-4. Run the driver recovery procedure.
+2. The controller shuts down / transitions to its powered-off recovery state.
+3. **Release the physical emergency-stop button. This step is mandatory before recovery.**
+4. Make sure that the robot workspace is safe.
+5. **Do not close the `dobot_e6_driver` node.**
+6. With the same driver node still running, start the recovery procedure using `/dobot/recover`.
 
 Send:
 
@@ -632,15 +669,60 @@ ros2 topic pub --once \
   "{}"
 ```
 
-Monitor the robot state:
+> **Important:** the emergency-stop button must be physically released before sending `/dobot/recover`. Keep the ROS 2 driver running during the entire recovery sequence.
+
+Monitor the controller state with:
 
 ```bash
 ros2 topic echo /dobot/robot_mode
 ```
 
-The recovery procedure handles the required controller operations, including alarm clearing and controller power restoration when necessary.
+## 10.1 Recovery sequence
 
-After an emergency stop, the controller may require approximately one minute to complete its startup sequence.
+The driver performs the recovery sequence while remaining connected to the robot.
+
+The expected sequence is conceptually:
+
+```text
+Emergency Stop pressed
+        │
+        ▼
+Robot stops and controller shuts down
+        │
+        ▼
+Release physical Emergency Stop
+        │
+        ▼
+Keep dobot_e6_driver running
+        │
+        ▼
+Publish /dobot/recover
+        │
+        ▼
+ClearError
+        │
+        ▼
+Controller enters POWER OFF state if required
+        │
+        ▼
+PowerOn
+        │
+        ▼
+Wait for controller startup
+        │
+        ▼
+RobotMode = 4
+DISABLED
+        │
+        ▼
+Enable robot manually
+        │
+        ▼
+RobotMode = 5
+ENABLED / IDLE
+```
+
+The controller may require approximately one minute to complete its startup sequence.
 
 When the robot reaches:
 
@@ -665,7 +747,7 @@ RobotMode = 5
 ENABLED / IDLE
 ```
 
-## 12.1 Robot remains in PAUSE
+## 10.2 Robot remains in PAUSE
 
 If the controller remains in:
 
@@ -702,22 +784,19 @@ Power on Magician E6
 Connect PC to LAN1
         │
         ▼
-source ROS 2
+Activate Python venv
         │
         ▼
-activate Python venv
+Source workspace
         │
         ▼
-source workspace
+Launch dobot_e6_driver
         │
         ▼
-launch dobot_e6_driver
+Wait for controller startup
         │
         ▼
-wait for controller startup
-        │
-        ▼
-enable robot
+Enable robot
         │
         ├──────────────► RViz visualization
         │
@@ -731,7 +810,6 @@ enable robot
 For a new terminal:
 
 ```bash
-source /opt/ros/jazzy/setup.bash
 source ~/MagicianE6/venv/bin/activate
 cd ~/MagicianE6/magician_ws
 source install/setup.bash
@@ -745,7 +823,9 @@ source install/setup.bash
 - Verify that the robot workspace is clear before enabling motion.
 - Start new velocity-control tests at low speed.
 - Do not use software stop commands as a replacement for the physical emergency stop.
-- After an emergency stop, verify the robot state before enabling motion again.
+- After pressing the emergency stop, **release it physically before running `/dobot/recover`**.
+- Keep `dobot_e6_driver` running during the recovery procedure.
+- After recovery, verify the robot state before enabling motion again.
 - Do not automatically resume a previously paused trajectory after an emergency stop.
 - Make sure the suction gripper is released before normal shutdown when appropriate.
 

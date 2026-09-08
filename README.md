@@ -66,8 +66,7 @@ After connection:
 3. Use the joint jog controls to verify motion.
 4. Verify that all six joints move correctly.
 5. Verify that the robot can reach its normal home configuration.
-
-![Magician E6 basic joint jog](assets/magician_e6_basic_joint_jog.png)
+<img width="1902" height="906" alt="image" src="https://github.com/user-attachments/assets/33920487-6f8c-4963-9832-7a3020cdb948" />
 
 ---
 

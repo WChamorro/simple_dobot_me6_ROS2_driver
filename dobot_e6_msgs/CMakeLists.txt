@@ -20,6 +20,8 @@ find_package(ament_cmake REQUIRED)
 
 find_package(rosidl_default_generators REQUIRED)
 
+find_package(std_msgs REQUIRED)
+
 
 # ============================================================
 # ROS 2 interfaces
@@ -29,7 +31,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 
   "msg/JointPositionCommand.msg"
   "msg/JointVelocityCommand.msg"
+  "msg/JointTelemetry.msg"
 
+  DEPENDENCIES
+  std_msgs
 )
 
 
@@ -47,3 +52,4 @@ ament_export_dependencies(
 # ============================================================
 
 ament_package()
+

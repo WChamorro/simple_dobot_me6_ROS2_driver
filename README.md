@@ -8,6 +8,7 @@ This repository provides:
 - Joint position commands
 - Joint velocity commands
 - Robot state feedback through `/joint_states`
+- Joint telemetry feedback: current, torque, temperature, and voltage
 - Home and packing motions
 - Suction gripper control
 - Emergency-stop recovery support
@@ -280,6 +281,7 @@ After launching the driver, the active ROS 2 topics should be similar to:
 /dobot/home
 /dobot/joint_position_cmd
 /dobot/joint_velocity_cmd
+/dobot/joint_telemetry
 /dobot/packing
 /dobot/recover
 /dobot/robot_mode
@@ -331,26 +333,88 @@ ros2 topic pub --once \
   "{data: false}"
 ```
 
-## 7.2 Driver topics and message types
+## 7.2 Driver topics, message types, and feedback units
 
-The **Type** column below indicates the ROS 2 message type used by each topic.
+The **Type** column indicates the ROS 2 message type used by each topic. For feedback topics, the **Units / values** column indicates the physical units or the meaning of the reported value.
 
-| Topic | Type | Purpose |
-|---|---|---|
-| `/dobot/control_mode_monitor` | `std_msgs/msg/String` | Reports the current driver control mode, such as `IDLE`, `POSITION`, or `VELOCITY`. |
-| `/dobot/enable` | `std_msgs/msg/Bool` | Enables or disables robot torque/control. `true` enables the robot and `false` disables it. |
-| `/dobot/home` | `std_msgs/msg/Empty` | Commands the predefined Home position configured in the driver. |
-| `/dobot/joint_position_cmd` | `dobot_e6_msgs/msg/JointPositionCommand` | Sends a six-joint position target in radians together with velocity and acceleration ratios. |
-| `/dobot/joint_velocity_cmd` | `dobot_e6_msgs/msg/JointVelocityCommand` | Sends desired joint velocities in rad/s for all six joints. |
-| `/dobot/packing` | `std_msgs/msg/Empty` | Commands the predefined Packing position configured in the driver. |
-| `/dobot/recover` | `std_msgs/msg/Empty` | Starts the robot recovery procedure after an emergency stop or controller fault. |
-| `/dobot/robot_mode` | `std_msgs/msg/Int32` | Reports the current DOBOT controller `RobotMode`. |
-| `/dobot/stop` | `std_msgs/msg/Empty` | Stops the active robot motion. |
-| `/dobot/suction_gripper` | `std_msgs/msg/Bool` | Activates or deactivates the ES01 suction gripper. |
-| `/dobot/suction_gripper_monitor` | `std_msgs/msg/Bool` | Reports the monitored Tool DO state associated with the suction gripper. |
-| `/joint_states` | `sensor_msgs/msg/JointState` | Publishes measured joint positions and velocities for J1-J6. Used by RViz and other ROS 2 nodes. |
-| `/parameter_events` | `rcl_interfaces/msg/ParameterEvent` | Standard ROS 2 topic reporting parameter changes. |
-| `/rosout` | `rcl_interfaces/msg/Log` | Standard ROS 2 logging topic. |
+| Topic | Type | Purpose | Units / values |
+|---|---|---|---|
+| `/dobot/control_mode_monitor` | `std_msgs/msg/String` | Reports the current driver control mode. | `IDLE`, `POSITION`, or `VELOCITY` |
+| `/dobot/enable` | `std_msgs/msg/Bool` | Enables or disables robot torque/control. `true` enables the robot and `false` disables it. | Command: Boolean |
+| `/dobot/home` | `std_msgs/msg/Empty` | Commands the predefined Home position configured in the driver. | Command |
+| `/dobot/joint_position_cmd` | `dobot_e6_msgs/msg/JointPositionCommand` | Sends a six-joint position target together with velocity and acceleration ratios. | Position: **rad**; velocity ratio: **%**; acceleration ratio: **%** |
+| `/dobot/joint_velocity_cmd` | `dobot_e6_msgs/msg/JointVelocityCommand` | Sends desired joint velocities for J1-J6. | **rad/s** |
+| `/dobot/joint_telemetry` | `dobot_e6_msgs/msg/JointTelemetry` | Publishes realtime electrical, mechanical, and thermal telemetry for J1-J6. | Current: **A**; torque: **N·m**; temperature: **°C**; voltage: **V** |
+| `/dobot/packing` | `std_msgs/msg/Empty` | Commands the predefined Packing position configured in the driver. | Command |
+| `/dobot/recover` | `std_msgs/msg/Empty` | Starts the robot recovery procedure after an emergency stop or controller fault. | Command |
+| `/dobot/robot_mode` | `std_msgs/msg/Int32` | Reports the current DOBOT controller `RobotMode`. | Integer state code; no physical unit |
+| `/dobot/stop` | `std_msgs/msg/Empty` | Stops the active robot motion. | Command |
+| `/dobot/suction_gripper` | `std_msgs/msg/Bool` | Activates or deactivates the ES01 suction gripper. | Command: Boolean |
+| `/dobot/suction_gripper_monitor` | `std_msgs/msg/Bool` | Reports the monitored Tool DO state associated with the suction gripper. | `true` = suction ON; `false` = suction OFF |
+| `/joint_states` | `sensor_msgs/msg/JointState` | Publishes measured joint positions and velocities for J1-J6. Used by RViz and other ROS 2 nodes. | Position: **rad**; velocity: **rad/s**; `effort` is currently not populated |
+| `/parameter_events` | `rcl_interfaces/msg/ParameterEvent` | Standard ROS 2 topic reporting parameter changes. | No physical unit |
+| `/rosout` | `rcl_interfaces/msg/Log` | Standard ROS 2 logging topic. | No physical unit |
+
+The custom telemetry message contains one value for each of the six robot joints:
+
+```text
+std_msgs/Header header
+
+string[6] name
+
+float64[6] current      # A
+float64[6] torque       # N*m
+float64[6] temperature  # degC
+float64[6] voltage      # V
+```
+
+The telemetry can be monitored with:
+
+```bash
+ros2 topic echo /dobot/joint_telemetry
+```
+
+A typical output is:
+
+```yaml
+name:
+- joint1
+- joint2
+- joint3
+- joint4
+- joint5
+- joint6
+current:
+- 0.024
+- 0.166
+- 0.172
+- -0.2445
+- 0.074
+- 0.039
+torque:
+- 0.303
+- 2.096
+- 2.171
+- -0.326
+- 0.074
+- 0.020
+temperature:
+- 48.0
+- 48.0
+- 32.0
+- 35.0
+- 39.0
+- 41.0
+voltage:
+- 47.0
+- 47.0
+- 48.0
+- 48.0
+- 47.0
+- 47.0
+```
+
+The arrays always follow the order given by `name`, from `joint1` to `joint6`.
 
 ## 7.3 Test the default Home position
 

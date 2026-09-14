@@ -36,6 +36,10 @@
     rosidl_default_generators
   </build_depend>
 
+  <depend>
+    std_msgs
+  </depend>
+
 
   <!-- ===================================================== -->
   <!-- Runtime interface support                             -->
@@ -64,3 +68,4 @@
   </export>
 
 </package>
+

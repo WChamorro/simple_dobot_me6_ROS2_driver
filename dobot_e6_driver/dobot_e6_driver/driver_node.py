@@ -18,6 +18,7 @@ from sensor_msgs.msg import JointState
 
 from dobot_e6_msgs.msg import JointPositionCommand
 from dobot_e6_msgs.msg import JointVelocityCommand
+from dobot_e6_msgs.msg import JointTelemetry
 
 from dobot_sdk import DobotRobot
 from dobot_sdk import CoordinateType
@@ -160,6 +161,19 @@ class DobotE6Driver(Node):
         self.latest_joint_velocity = None
         self.latest_robot_mode = None
 
+        # Joint telemetry received from the same realtime
+        # feedback stream used for q_actual and qd_actual.
+        self.latest_joint_current = None
+        self.latest_joint_torque = None
+        self.latest_joint_temperature = None
+        self.latest_joint_voltage = None
+        self.telemetry_valid = False
+
+        # Track which telemetry fields are exposed by the
+        # installed DOBOT Python SDK.  Availability is logged
+        # only when it changes, avoiding repeated warnings.
+        self.last_telemetry_availability = None
+
         self.last_feedback_time = None
 
         self.feedback_valid = False
@@ -186,6 +200,12 @@ class DobotE6Driver(Node):
         self.joint_state_pub = self.create_publisher(
             JointState,
             '/joint_states',
+            10
+        )
+
+        self.joint_telemetry_pub = self.create_publisher(
+            JointTelemetry,
+            '/dobot/joint_telemetry',
             10
         )
 
@@ -1039,6 +1059,172 @@ class DobotE6Driver(Node):
         return robot
 
     # ========================================================
+    # Realtime telemetry helpers
+    # ========================================================
+
+    @staticmethod
+    def _extract_six_float_values(
+        status,
+        field_names
+    ):
+        """Extract a six-value telemetry vector from RobotStatus.
+
+        The DOBOT realtime packet contains current, torque,
+        temperature and voltage values. Depending on the exact
+        Python SDK model, a field may be exposed through
+        status.joint_state, directly through status, or through
+        an internal/raw feedback container.
+
+        Returning None keeps normal joint-state feedback running
+        if a particular SDK version does not expose one of the
+        telemetry fields.
+        """
+
+        sources = []
+
+        joint_state = getattr(
+            status,
+            'joint_state',
+            None
+        )
+
+        if joint_state is not None:
+            sources.append(joint_state)
+
+        sources.append(status)
+
+        # Optional fallback containers used by some SDK/parser
+        # implementations. These accesses are intentionally
+        # defensive so the driver remains compatible with the
+        # current RobotStatus interface.
+        for container_name in (
+            'raw_data',
+            'realtime_data',
+            'feedback_data',
+            'data'
+        ):
+
+            container = getattr(
+                status,
+                container_name,
+                None
+            )
+
+            if container is not None:
+                sources.append(container)
+
+        for source in sources:
+
+            for field_name in field_names:
+
+                value = None
+
+                # Attribute-style object.
+                try:
+
+                    if hasattr(
+                        source,
+                        field_name
+                    ):
+
+                        value = getattr(
+                            source,
+                            field_name
+                        )
+
+                except Exception:
+
+                    value = None
+
+                # Mapping / numpy structured-record style fallback.
+                if value is None:
+
+                    try:
+
+                        value = source[
+                            field_name
+                        ]
+
+                    except Exception:
+
+                        value = None
+
+                if value is None:
+                    continue
+
+                try:
+
+                    values = [
+                        float(v)
+                        for v in value
+                    ]
+
+                except Exception:
+
+                    continue
+
+                if len(values) != 6:
+                    continue
+
+                if not all(
+                    math.isfinite(v)
+                    for v in values
+                ):
+
+                    continue
+
+                return values
+
+        return None
+
+    def _extract_joint_telemetry(
+        self,
+        status
+    ):
+
+        current = self._extract_six_float_values(
+            status,
+            (
+                'i_actual',
+                'IActual'
+            )
+        )
+
+        torque = self._extract_six_float_values(
+            status,
+            (
+                'm_actual',
+                'MActual',
+                'm_actual[6]'
+            )
+        )
+
+        temperature = self._extract_six_float_values(
+            status,
+            (
+                'temperatures',
+                'motor_temperatures',
+                'MotorTemperatures'
+            )
+        )
+
+        voltage = self._extract_six_float_values(
+            status,
+            (
+                'voltages',
+                'v_actual',
+                'VActual'
+            )
+        )
+
+        return (
+            current,
+            torque,
+            temperature,
+            voltage
+        )
+
+    # ========================================================
     # Realtime feedback callback
     # ========================================================
 
@@ -1081,6 +1267,42 @@ class DobotE6Driver(Node):
             ]
 
             # ------------------------------------------------
+            # Joint telemetry
+            #
+            # No unit conversion is applied here:
+            # current     -> A
+            # torque      -> N*m
+            # temperature -> degC
+            # voltage     -> V
+            # ------------------------------------------------
+
+            (
+                joint_current,
+                joint_torque,
+                joint_temperature,
+                joint_voltage
+            ) = self._extract_joint_telemetry(
+                status
+            )
+
+            telemetry_valid = any(
+                values is not None
+                for values in (
+                    joint_current,
+                    joint_torque,
+                    joint_temperature,
+                    joint_voltage
+                )
+            )
+
+            telemetry_availability = (
+                joint_current is not None,
+                joint_torque is not None,
+                joint_temperature is not None,
+                joint_voltage is not None
+            )
+
+            # ------------------------------------------------
             # RobotMode
             # ------------------------------------------------
 
@@ -1113,6 +1335,34 @@ class DobotE6Driver(Node):
 
                 self.latest_joint_velocity = (
                     joint_velocity
+                )
+
+                self.latest_joint_current = (
+                    None
+                    if joint_current is None
+                    else joint_current.copy()
+                )
+
+                self.latest_joint_torque = (
+                    None
+                    if joint_torque is None
+                    else joint_torque.copy()
+                )
+
+                self.latest_joint_temperature = (
+                    None
+                    if joint_temperature is None
+                    else joint_temperature.copy()
+                )
+
+                self.latest_joint_voltage = (
+                    None
+                    if joint_voltage is None
+                    else joint_voltage.copy()
+                )
+
+                self.telemetry_valid = (
+                    telemetry_valid
                 )
 
                 self.latest_robot_mode = (
@@ -1308,6 +1558,64 @@ class DobotE6Driver(Node):
                 )
 
             # ------------------------------------------------
+            # Telemetry availability diagnostics
+            #
+            # The current SDK version may expose only a subset
+            # of the realtime telemetry fields through
+            # RobotStatus. Missing fields are still represented
+            # in /dobot/joint_telemetry as NaN so that available
+            # fields such as current and torque are not blocked.
+            # ------------------------------------------------
+
+            if (
+                telemetry_availability
+                != self.last_telemetry_availability
+            ):
+
+                field_names = (
+                    'current',
+                    'torque',
+                    'temperature',
+                    'voltage'
+                )
+
+                available_fields = [
+                    field_names[i]
+                    for i, available in enumerate(
+                        telemetry_availability
+                    )
+                    if available
+                ]
+
+                missing_fields = [
+                    field_names[i]
+                    for i, available in enumerate(
+                        telemetry_availability
+                    )
+                    if not available
+                ]
+
+                if available_fields:
+
+                    self.get_logger().info(
+                        'Joint telemetry available from SDK: '
+                        + ', '.join(available_fields)
+                    )
+
+                if missing_fields:
+
+                    self.get_logger().warning(
+                        'Joint telemetry fields not exposed by '
+                        'the current SDK RobotStatus: '
+                        + ', '.join(missing_fields)
+                        + '. These fields will be published as NaN.'
+                    )
+
+                self.last_telemetry_availability = (
+                    telemetry_availability
+                )
+
+            # ------------------------------------------------
             # First packet
             # ------------------------------------------------
 
@@ -1350,9 +1658,41 @@ class DobotE6Driver(Node):
                 self.latest_joint_velocity.copy()
             )
 
+            telemetry_valid = (
+                self.telemetry_valid
+            )
+
+            joint_current = (
+                None
+                if self.latest_joint_current is None
+                else self.latest_joint_current.copy()
+            )
+
+            joint_torque = (
+                None
+                if self.latest_joint_torque is None
+                else self.latest_joint_torque.copy()
+            )
+
+            joint_temperature = (
+                None
+                if self.latest_joint_temperature is None
+                else self.latest_joint_temperature.copy()
+            )
+
+            joint_voltage = (
+                None
+                if self.latest_joint_voltage is None
+                else self.latest_joint_voltage.copy()
+            )
+
             robot_mode = (
                 self.latest_robot_mode
             )
+
+        feedback_stamp = (
+            self.get_clock().now().to_msg()
+        )
 
         # ====================================================
         # JointState
@@ -1361,7 +1701,7 @@ class DobotE6Driver(Node):
         msg = JointState()
 
         msg.header.stamp = (
-            self.get_clock().now().to_msg()
+            feedback_stamp
         )
 
         msg.name = JOINT_NAMES
@@ -1379,6 +1719,50 @@ class DobotE6Driver(Node):
         self.joint_state_pub.publish(
             msg
         )
+
+        # ====================================================
+        # JointTelemetry
+        # ====================================================
+
+        if telemetry_valid:
+
+            telemetry_msg = JointTelemetry()
+
+            telemetry_msg.header.stamp = (
+                feedback_stamp
+            )
+
+            telemetry_msg.name = (
+                JOINT_NAMES
+            )
+
+            telemetry_msg.current = (
+                joint_current
+                if joint_current is not None
+                else [math.nan] * 6
+            )
+
+            telemetry_msg.torque = (
+                joint_torque
+                if joint_torque is not None
+                else [math.nan] * 6
+            )
+
+            telemetry_msg.temperature = (
+                joint_temperature
+                if joint_temperature is not None
+                else [math.nan] * 6
+            )
+
+            telemetry_msg.voltage = (
+                joint_voltage
+                if joint_voltage is not None
+                else [math.nan] * 6
+            )
+
+            self.joint_telemetry_pub.publish(
+                telemetry_msg
+            )
 
         # ====================================================
         # RobotMode
@@ -4144,6 +4528,17 @@ class DobotE6Driver(Node):
                                 'reconnection.'
                             )
 
+                        if self.shutdown_event.is_set():
+
+                            new_robot.Disconnect()
+
+                            self.get_logger().info(
+                                'RECOVERY: shutdown requested; '
+                                'reconnection aborted.'
+                            )
+
+                            return
+
                         new_robot.StartFeedbackMonitor(
                             callback=self.feedback_callback
                         )
@@ -4151,6 +4546,12 @@ class DobotE6Driver(Node):
                         with self.command_lock:
 
                             self.robot = new_robot
+
+                        if self.shutdown_event.is_set():
+
+                            self.accept_commands = False
+
+                            return
 
                         self.accept_commands = True
 
@@ -4251,6 +4652,16 @@ class DobotE6Driver(Node):
 
             self.latest_joint_velocity = None
 
+            self.latest_joint_current = None
+
+            self.latest_joint_torque = None
+
+            self.latest_joint_temperature = None
+
+            self.latest_joint_voltage = None
+
+            self.telemetry_valid = False
+
             self.latest_robot_mode = None
 
             self.last_feedback_time = None
@@ -4260,6 +4671,8 @@ class DobotE6Driver(Node):
             self.feedback_received = False
 
             self.last_logged_robot_mode = None
+
+            self.last_telemetry_availability = None
 
         # ToolDO state will be read again after reconnection.
         self.gripper_state = None
@@ -4286,37 +4699,228 @@ class DobotE6Driver(Node):
         return None
 
     # ========================================================
+    # Safety shutdown helpers
+    # ========================================================
+
+    def _force_disable_robot_on_shutdown(self):
+
+        self.get_logger().info(
+            'SAFETY SHUTDOWN: forcing robot disable...'
+        )
+
+        disable_confirmed = False
+        existing_robot = None
+
+        # First try the existing controller connection.  A timed
+        # lock prevents shutdown from blocking forever behind a
+        # worker thread.
+        lock_acquired = self.command_lock.acquire(
+            timeout=2.0
+        )
+
+        if lock_acquired:
+
+            try:
+
+                existing_robot = self.robot
+
+                if existing_robot is not None:
+
+                    # Stop is best-effort. DisableRobot is still
+                    # attempted even when Stop fails.
+                    try:
+
+                        stop_response = (
+                            existing_robot
+                            .robot_control
+                            .Stop()
+                        )
+
+                        self.get_logger().info(
+                            'Stop on shutdown: '
+                            f'{stop_response}'
+                        )
+
+                    except Exception as e:
+
+                        self.get_logger().warning(
+                            'Could not issue Stop during '
+                            f'shutdown: {e}'
+                        )
+
+                    try:
+
+                        disable_response = (
+                            existing_robot
+                            .robot_control
+                            .DisableRobot()
+                        )
+
+                        self.get_logger().info(
+                            'DisableRobot on shutdown: '
+                            f'{disable_response}'
+                        )
+
+                        if disable_response.startswith('0,'):
+
+                            disable_confirmed = True
+
+                    except Exception as e:
+
+                        self.get_logger().warning(
+                            'DisableRobot failed on the '
+                            f'existing connection: {e}'
+                        )
+
+            finally:
+
+                self.command_lock.release()
+
+        else:
+
+            self.get_logger().warning(
+                'Could not acquire command lock during '
+                'shutdown. Trying an independent safety '
+                'connection.'
+            )
+
+        # If the normal connection could not confirm the disable,
+        # make one final best-effort attempt through a temporary
+        # dashboard connection. This is intentionally independent
+        # of robot_enabled_by_driver and of the motion mode.
+        if not disable_confirmed:
+
+            fallback_robot = None
+
+            try:
+
+                self.get_logger().warning(
+                    'SAFETY SHUTDOWN: attempting fallback '
+                    'DisableRobot connection.'
+                )
+
+                fallback_robot = DobotRobot(
+                    self.robot_ip
+                )
+
+                fallback_robot.Connect()
+
+                request_response = (
+                    fallback_robot
+                    .robot_control
+                    .RequestControl()
+                )
+
+                self.get_logger().info(
+                    'Fallback RequestControl: '
+                    f'{request_response}'
+                )
+
+                if request_response.startswith('0,'):
+
+                    disable_response = (
+                        fallback_robot
+                        .robot_control
+                        .DisableRobot()
+                    )
+
+                    self.get_logger().info(
+                        'Fallback DisableRobot: '
+                        f'{disable_response}'
+                    )
+
+                    if disable_response.startswith('0,'):
+
+                        disable_confirmed = True
+
+            except Exception as e:
+
+                self.get_logger().error(
+                    'SAFETY SHUTDOWN: fallback disable '
+                    f'failed: {e}'
+                )
+
+            finally:
+
+                if fallback_robot is not None:
+
+                    try:
+
+                        fallback_robot.Disconnect()
+
+                    except Exception:
+
+                        pass
+
+        if disable_confirmed:
+
+            self.robot_enabled_by_driver = False
+
+            self.get_logger().info(
+                'SAFETY SHUTDOWN: robot disable confirmed.'
+            )
+
+        else:
+
+            self.get_logger().error(
+                'SAFETY SHUTDOWN: unable to confirm robot '
+                'disable. Use the physical emergency stop '
+                'if the robot remains enabled.'
+            )
+
+        return disable_confirmed
+
+    # ========================================================
     # Shutdown
     # ========================================================
 
     def destroy_node(self):
 
         self.get_logger().info(
-            'Shutting down Dobot E6 driver...'
+            '================================='
+        )
+
+        self.get_logger().info(
+            'SHUTTING DOWN DOBOT E6 DRIVER'
+        )
+
+        self.get_logger().info(
+            '================================='
         )
 
         self.accept_commands = False
-
         self.shutdown_event.set()
 
         # ----------------------------------------------------
-        # Stop active robot motion first.
+        # Immediately stop the local command generators.
+        # No further ServoJ or position commands may be issued.
         # ----------------------------------------------------
+
+        publish_idle = False
 
         with self.state_lock:
 
-            active_mode = (
-                self.control_mode
+            previous_mode = self.control_mode
+
+            self._reset_position_state_locked()
+            self._reset_velocity_state_locked()
+
+            self.control_mode = CONTROL_MODE_IDLE
+
+            publish_idle = (
+                previous_mode
+                != CONTROL_MODE_IDLE
             )
 
-        if active_mode != CONTROL_MODE_IDLE:
+        if publish_idle:
 
-            self.stop_robot_motion(
-                reason='driver shutdown'
+            self.publish_control_mode_monitor(
+                CONTROL_MODE_IDLE
             )
 
         # ----------------------------------------------------
-        # Recovery thread
+        # Give an active recovery worker a short opportunity to
+        # observe shutdown_event before forcing the final disable.
         # ----------------------------------------------------
 
         if (
@@ -4325,11 +4929,25 @@ class DobotE6Driver(Node):
         ):
 
             self.recovery_thread.join(
-                timeout=2.0
+                timeout=1.0
             )
 
         # ----------------------------------------------------
-        # Robot connection
+        # CRITICAL SAFETY ACTION
+        #
+        # Always attempt DisableRobot, regardless of:
+        #   - robot_enabled_by_driver
+        #   - POSITION / VELOCITY / IDLE state
+        #   - recovery state
+        #
+        # The internal bookkeeping flag must never decide
+        # whether the physical robot remains enabled.
+        # ----------------------------------------------------
+
+        self._force_disable_robot_on_shutdown()
+
+        # ----------------------------------------------------
+        # Robot connection used for the remaining cleanup.
         # ----------------------------------------------------
 
         with self.command_lock:
@@ -4339,15 +4957,8 @@ class DobotE6Driver(Node):
         if robot is not None:
 
             # ------------------------------------------------
-            # Release suction gripper before disabling the arm.
-            #
-            # If the driver knows that suction is currently ON,
-            # explicitly command the configured logical OFF state
-            # while the TCP/IP connection is still available.
-            #
-            # The raw ToolDO value is generated through
-            # gripper_logical_to_raw(False), so this also works
-            # correctly when gripper_active_high is False.
+            # Release suction gripper after the arm has been
+            # disabled. Tool IO is independent from arm torque.
             # ------------------------------------------------
 
             if (
@@ -4366,7 +4977,19 @@ class DobotE6Driver(Node):
                         self.gripper_logical_to_raw(False)
                     )
 
-                    with self.command_lock:
+                    lock_acquired = (
+                        self.command_lock.acquire(
+                            timeout=2.0
+                        )
+                    )
+
+                    if not lock_acquired:
+
+                        raise RuntimeError(
+                            'command lock unavailable'
+                        )
+
+                    try:
 
                         if self.robot is None:
 
@@ -4380,6 +5003,10 @@ class DobotE6Driver(Node):
                                 raw_off_status
                             )
                         )
+
+                    finally:
+
+                        self.command_lock.release()
 
                     self.get_logger().info(
                         'ToolDOInstant(gripper OFF) on shutdown: '
@@ -4397,7 +5024,7 @@ class DobotE6Driver(Node):
 
                         self.get_logger().info(
                             'Suction gripper released successfully '
-                            'before shutdown.'
+                            'before disconnect.'
                         )
 
                     else:
@@ -4413,32 +5040,6 @@ class DobotE6Driver(Node):
                     self.get_logger().warning(
                         'Could not release suction gripper '
                         'during shutdown: '
-                        f'{e}'
-                    )
-
-            # ------------------------------------------------
-            # Disable if this node enabled the robot.
-            # ------------------------------------------------
-
-            if self.robot_enabled_by_driver:
-
-                try:
-
-                    response = (
-                        robot
-                        .robot_control
-                        .DisableRobot()
-                    )
-
-                    self.get_logger().info(
-                        'DisableRobot on shutdown: '
-                        f'{response}'
-                    )
-
-                except Exception as e:
-
-                    self.get_logger().warning(
-                        'Could not disable robot: '
                         f'{e}'
                     )
 
@@ -4479,6 +5080,10 @@ class DobotE6Driver(Node):
                     f'Disconnect error: {e}'
                 )
 
+        self.get_logger().info(
+            'Dobot E6 driver shutdown complete.'
+        )
+
         super().destroy_node()
 
 
@@ -4500,11 +5105,28 @@ def main(args=None):
 
         pass
 
+    except Exception as e:
+
+        # ExternalShutdownException and other executor shutdown
+        # paths still pass through finally, where the robot is
+        # force-disabled before the node is destroyed.
+        if e.__class__.__name__ != 'ExternalShutdownException':
+
+            node.get_logger().error(
+                f'Driver terminated with exception: {e}'
+            )
+
     finally:
 
-        node.destroy_node()
+        try:
 
-        rclpy.shutdown()
+            node.destroy_node()
+
+        finally:
+
+            if rclpy.ok():
+
+                rclpy.shutdown()
 
 
 if __name__ == '__main__':

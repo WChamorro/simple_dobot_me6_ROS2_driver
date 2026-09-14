@@ -596,6 +596,8 @@ robot_state_publisher
 ```
 
 The physical robot and the RViz model should move simultaneously.
+<img width="637" height="822" alt="image" src="https://github.com/user-attachments/assets/8b79eff5-68ab-4d11-830a-1095d0304391" />
+
 
 ---
 
